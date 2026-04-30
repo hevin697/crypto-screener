@@ -28,22 +28,39 @@ wss.on('connection', (clientWs, req) => {
   console.log(`Клиент подключился → ${symbol}@${interval}`);
 
   const streamName = `${symbol.toLowerCase()}@kline_${interval}`;
-  // Правильный URL (новый формат Binance 2024+)
   const binanceUrl = `wss://fstream.binance.com/ws/${streamName}`;
 
   let binanceWs = null;
   let reconnectAttempts = 0;
   const maxDelay = 30000;
   let clientClosed = false;
+  let reconnectTimer = null;
+
+  const safeCloseBinance = () => {
+    if (binanceWs) {
+      try {
+        binanceWs.onopen = null;
+        binanceWs.onmessage = null;
+        binanceWs.onclose = null;
+        binanceWs.onerror = null;
+        if (binanceWs.readyState === WebSocket.OPEN || binanceWs.readyState === WebSocket.CONNECTING) {
+          binanceWs.close(1000, 'Client disconnect');
+        }
+      } catch (e) {}
+      binanceWs = null;
+    }
+  };
 
   const connectBinance = () => {
-    if (binanceWs) {
-      binanceWs.onclose = null;
-      binanceWs.close(1000);
-    }
-
+    safeCloseBinance();
     console.log(`Подключение к Binance (попытка ${reconnectAttempts + 1}): ${streamName}`);
-    binanceWs = new WebSocket(binanceUrl);
+    try {
+      binanceWs = new WebSocket(binanceUrl);
+    } catch (err) {
+      console.error('Ошибка создания WebSocket:', err.message);
+      scheduleReconnect();
+      return;
+    }
 
     binanceWs.onopen = () => {
       console.log(`✅ Binance WebSocket открыт: ${streamName}`);
@@ -53,28 +70,39 @@ wss.on('connection', (clientWs, req) => {
     binanceWs.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (clientWs.readyState === WebSocket.OPEN && msg?.e === 'kline') {
-          clientWs.send(JSON.stringify(msg.k));
+        // Пытаемся извлечь свечу из обоих форматов
+        let kline = null;
+        if (msg?.data?.k) {
+          kline = msg.data.k;   // старый формат: {data:{e:"kline", k:{...}}}
+        } else if (msg?.k) {
+          kline = msg.k;        // новый формат: {e:"kline", k:{...}}
+        }
+        if (clientWs.readyState === WebSocket.OPEN && kline) {
+          clientWs.send(JSON.stringify(kline));
+          console.log('📤 Свеча отправлена клиенту:', kline.t);
         }
       } catch (err) {
-        console.error('Ошибка парсинга сообщения от Binance:', err.message);
+        console.error('Ошибка обработки сообщения от Binance:', err.message);
       }
     };
 
     binanceWs.onclose = (event) => {
       console.log(`Binance WebSocket закрыт (код ${event.code})`);
       if (!clientClosed && clientWs.readyState === WebSocket.OPEN) {
-        const delay = Math.min(1000 * 2 ** reconnectAttempts, maxDelay);
-        reconnectAttempts++;
-        setTimeout(connectBinance, delay);
+        scheduleReconnect();
       }
     };
 
     binanceWs.onerror = (err) => {
-      console.error('Ошибка Binance WebSocket:', err.message || 'неизвестная ошибка');
-      // Закрытие вызовет onclose, где произойдет переподключение
-      binanceWs.close();
+      console.error('Ошибка Binance WebSocket:', err.message || 'Network error');
     };
+  };
+
+  const scheduleReconnect = () => {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), maxDelay);
+    reconnectAttempts++;
+    reconnectTimer = setTimeout(connectBinance, delay);
   };
 
   connectBinance();
@@ -82,10 +110,8 @@ wss.on('connection', (clientWs, req) => {
   clientWs.on('close', () => {
     console.log('Клиент отключился');
     clientClosed = true;
-    if (binanceWs) {
-      binanceWs.onclose = null;
-      binanceWs.close(1000);
-    }
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    safeCloseBinance();
   });
 
   clientWs.on('error', (err) => {
