@@ -30,14 +30,18 @@ console.log(`🔌 Сервер запущен на порту ${PORT}`);
 
 // Обработка клиентских WebSocket подключений
 wss.on('connection', (clientWs, req) => {
-  // Извлекаем параметры из URL запроса (например, ?symbol=BTCUSDT&interval=1m)
   const urlParams = new URLSearchParams(req.url.slice(1));
   const symbol = urlParams.get('symbol') || 'BTCUSDT';
   const interval = urlParams.get('interval') || '1h';
 
   console.log(`Клиент подключился → ${symbol}@${interval}`);
 
-  let binanceWs = null;
+  // ---- ВАЖНОЕ ИЗМЕНЕНИЕ: Используем новый URL Binance ----
+  const streamName = `${symbol.toLowerCase()}@kline_${interval}`;
+  // Новый URL для публичных данных
+  const binanceUrl = `wss://fstream.binance.com/public/ws/${streamName}`;
+
+  let binanceWs = new WebSocket(binanceUrl);
   let reconnectAttempts = 0;
   const maxDelay = 30000;
   let closedIntentionally = false;
@@ -48,22 +52,23 @@ wss.on('connection', (clientWs, req) => {
       binanceWs.close(1000);
     }
 
-    const streamName = `${symbol.toLowerCase()}@kline_${interval}`;
-    const binanceUrl = `wss://fstream.binance.com/stream?streams=${streamName}`;
-
     binanceWs = new WebSocket(binanceUrl);
-    console.log(`Подключение к Binance: ${streamName}`);
+    console.log(`Подключение к Binance (попытка ${reconnectAttempts + 1}): ${streamName}`);
 
     binanceWs.onopen = () => {
-      console.log(`✅ Binance открыт: ${streamName}`);
+      console.log(`✅ Binance WebSocket открыт: ${streamName}`);
       reconnectAttempts = 0;
     };
 
     binanceWs.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      // Пересылаем только данные о свечах, если клиент ещё открыт
-      if (clientWs.readyState === WebSocket.OPEN && msg.data?.e === 'kline') {
-        clientWs.send(JSON.stringify(msg.data.k));
+      try {
+        const msg = JSON.parse(event.data);
+        // Пересылаем данные только о свечах, если клиент ещё открыт
+        if (clientWs.readyState === WebSocket.OPEN && msg.data && msg.data.e === 'kline') {
+          clientWs.send(JSON.stringify(msg.data.k));
+        }
+      } catch (err) {
+        console.error('Ошибка обработки сообщения от Binance:', err.message);
       }
     };
 

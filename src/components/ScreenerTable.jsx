@@ -10,7 +10,9 @@ function ScreenerTable({ minVolume, onSelect, activeSymbol }) {
     const load = () => {
       fetch24hrTickers()
         .then(data => {
-          setTickers(data);
+          // Фильтруем "мёртвые" тикеры с нулевой ценой или объёмом
+          const filteredData = data.filter(t => t.lastPrice > 0 && t.quoteVolume > 0);
+          setTickers(filteredData);
           setLoading(false);
         })
         .catch(err => {
@@ -20,7 +22,7 @@ function ScreenerTable({ minVolume, onSelect, activeSymbol }) {
     };
 
     load(); // первый запуск сразу
-    const interval = setInterval(load, 2000); // каждые 5 секунд
+    const interval = setInterval(load, 5000); // каждые 5 секунд
 
     return () => clearInterval(interval); // очистка при размонтировании
   }, []);
