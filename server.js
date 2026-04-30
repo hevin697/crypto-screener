@@ -43,16 +43,22 @@ wss.on('connection', (clientWs, req) => {
         binanceWs.onmessage = null;
         binanceWs.onclose = null;
         binanceWs.onerror = null;
-        if (binanceWs.readyState === WebSocket.OPEN || binanceWs.readyState === WebSocket.CONNECTING) {
+        if (binanceWs.readyState === WebSocket.OPEN) {
           binanceWs.close(1000, 'Client disconnect');
+        } else if (binanceWs.readyState === WebSocket.CONNECTING) {
+          binanceWs.onopen = () => binanceWs.close(1000);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('safeCloseBinance error:', e.message);
+      }
       binanceWs = null;
     }
   };
 
   const connectBinance = () => {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
     safeCloseBinance();
+
     console.log(`Подключение к Binance (попытка ${reconnectAttempts + 1}): ${streamName}`);
     try {
       binanceWs = new WebSocket(binanceUrl);
@@ -69,20 +75,23 @@ wss.on('connection', (clientWs, req) => {
 
     binanceWs.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data);
-        // Пытаемся извлечь свечу из обоих форматов
+        const raw = event.data.toString();
+        console.log(`📩 Получено сырое сообщение от Binance: ${raw.slice(0, 200)}`);
+        const msg = JSON.parse(raw);
         let kline = null;
         if (msg?.data?.k) {
-          kline = msg.data.k;   // старый формат: {data:{e:"kline", k:{...}}}
+          kline = msg.data.k;
         } else if (msg?.k) {
-          kline = msg.k;        // новый формат: {e:"kline", k:{...}}
+          kline = msg.k;
         }
-        if (clientWs.readyState === WebSocket.OPEN && kline) {
-          clientWs.send(JSON.stringify(kline));
-          console.log('📤 Свеча отправлена клиенту:', kline.t);
+        if (kline) {
+          console.log('📤 Отправка свечи клиенту:', kline.t);
+          if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.send(JSON.stringify(kline));
+          }
         }
       } catch (err) {
-        console.error('Ошибка обработки сообщения от Binance:', err.message);
+        console.error('Ошибка обработки сообщения Binance:', err.message);
       }
     };
 
@@ -94,7 +103,8 @@ wss.on('connection', (clientWs, req) => {
     };
 
     binanceWs.onerror = (err) => {
-      console.error('Ошибка Binance WebSocket:', err.message || 'Network error');
+      console.error('Ошибка Binance WebSocket:', err.message || 'Неизвестная ошибка');
+      // Не закрываем принудительно, onclose вызовется сам
     };
   };
 
