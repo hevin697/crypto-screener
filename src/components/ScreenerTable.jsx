@@ -1,35 +1,5 @@
-import { useState, useEffect } from 'react';
-import { fetch24hrTickers } from '../utils/api';
-
-function ScreenerTable({ minVolume, onSelect, activeSymbol }) {
-  const [tickers, setTickers] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Загружаем и обновляем тикеры
-  useEffect(() => {
-    const load = () => {
-      fetch24hrTickers()
-        .then(data => {
-          // Фильтруем "мёртвые" тикеры с нулевой ценой или объёмом
-          const filteredData = data.filter(t => t.lastPrice > 0 && t.quoteVolume > 0);
-          setTickers(filteredData);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error('Ошибка загрузки тикеров', err);
-          setLoading(false);
-        });
-    };
-
-    load(); // первый запуск сразу
-    const interval = setInterval(load, 5000); // каждые 5 секунд
-
-    return () => clearInterval(interval); // очистка при размонтировании
-  }, []);
-
+function ScreenerTable({ tickers, minVolume, onSelect, activeSymbol }) {
   const filtered = tickers.filter(t => t.quoteVolume >= minVolume);
-
-  if (loading) return <div>Загрузка списка пар...</div>;
 
   return (
     <div style={{ overflowY: 'auto', flex: 1 }}>
