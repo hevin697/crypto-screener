@@ -9,35 +9,38 @@ function App() {
   const [interval, setIntervalState] = useState('1h');
   const [minVolume, setMinVolume] = useState(10000000);
   const [candles, setCandles] = useState([]);
-  const [tickers, setTickers] = useState([]); // хранилище для таблицы
+  const [tickers, setTickers] = useState([]);
+  const wsRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
 
   // Первоначальная загрузка тикеров
   useEffect(() => {
     fetch24hrTickers().then(data => {
-      setTickers(data.filter(t => t.lastPrice > 0 && t.quoteVolume > 0));
+      if (data) setTickers(data.filter(t => t.lastPrice > 0 && t.quoteVolume > 0));
     });
   }, []);
 
-  // Загрузка истории при смене пары или таймфрейма
+  // Загрузка истории при смене пары/таймфрейма
   useEffect(() => {
     if (!selectedSymbol) return;
     fetchKlines(selectedSymbol, interval).then(setCandles);
   }, [selectedSymbol, interval]);
 
-  // WebSocket с прокси-сервера (обновлённый useRef для хранения ws)
-  const wsRef = useRef(null);
-  const onMessageRef = useRef(null);
-
-  useEffect(() => {
+  // Подключение WebSocket
+  const connectWebSocket = useCallback(() => {
     if (!selectedSymbol) return;
+
+    if (wsRef.current) {
+      wsRef.current.onclose = null; // убираем старый обработчик, чтобы не было ложного переподключения
+      wsRef.current.close(1000);
+    }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${window.location.host}/?symbol=${selectedSymbol}&interval=${interval}`;
-
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
-    ws.onopen = () => console.log('✅ WebSocket к серверу открыт');
+    ws.onopen = () => console.log('✅ WebSocket открыт');
 
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
@@ -64,7 +67,6 @@ function App() {
         });
       } else if (msg.type === 'miniTicker') {
         const tick = msg.data;
-        // Обновляем цену и объём для выбранного символа в таблице (без пересоздания массива)
         setTickers(prev => {
           const idx = prev.findIndex(t => t.symbol === tick.s);
           if (idx === -1) return prev;
@@ -72,19 +74,39 @@ function App() {
           updated[idx] = {
             ...updated[idx],
             lastPrice: parseFloat(tick.c),
-            quoteVolume: parseFloat(tick.q), // quote asset volume
+            quoteVolume: parseFloat(tick.q),
           };
           return updated;
         });
       }
     };
 
-    ws.onclose = () => console.log('WebSocket закрыт');
+    ws.onclose = (event) => {
+      if (event.code !== 1000) {
+        console.log('Переподключение через 3 сек');
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connectWebSocket();
+        }, 3000);
+      }
+    };
 
-    return () => {
+    ws.onerror = (err) => {
+      console.error('WebSocket ошибка', err);
       ws.close();
     };
   }, [selectedSymbol, interval]);
+
+  useEffect(() => {
+    connectWebSocket();
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close(1000);
+      }
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    };
+  }, [connectWebSocket]);
 
   const intervalsList = ['1m', '5m', '15m', '1h', '4h', '1d'];
 

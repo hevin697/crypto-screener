@@ -19,7 +19,7 @@ function ScreenerTable({ tickers, minVolume, onSelect, activeSymbol }) {
               className={activeSymbol === t.symbol ? 'active' : ''}
             >
               <td>{t.symbol}</td>
-              <td>{t.lastPrice.toFixed(4)}</td>
+              <td>{t.lastPrice?.toFixed(4)}</td>
               <td>{(t.quoteVolume / 1e6).toFixed(2)}M</td>
             </tr>
           ))}
