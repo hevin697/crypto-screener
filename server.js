@@ -60,6 +60,7 @@ function getOrCreateBinanceStream(streamKey, symbol) {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        console.log('📨 Сообщение от Binance:', JSON.stringify(msg).slice(0, 150)); // <-- ВОТ ЭТА СТРОКА
         if (msg.data) {
           if (msg.data.e === 'kline') {
             const kline = msg.data.k;
